@@ -52,7 +52,8 @@ class Memory(object):
 class FullyConnectedQNetwork(object):
     "A fully connected Q-learning approximation neural network."
     def __init__(self, learning_rate, observation_size, action_size,
-                 hidden_size, n_layers, name='FullyConnectedQNetwork'):
+                 hidden_size, n_layers, name='FullyConnectedQNetwork',
+                 clip_delta=False):
 
         self.layers = []
         tf.reset_default_graph()
@@ -93,8 +94,19 @@ class FullyConnectedQNetwork(object):
                 ),
             axis=1)
 
+
+            delta = self.q - self.q_targets_
+            if clip_delta:
+                delta = tf.clip_by_value(
+                    delta,
+                    -1.0,
+                    +1.0
+                )
+
             # The loss function
-            self.loss = tf.reduce_mean(tf.square(self.q_targets_ - self.q))
+            self.loss = tf.reduce_mean(
+                tf.square(delta)
+            )
             # }}}
 
             self.opt = tf.train.AdamOptimizer(learning_rate).minimize(self.loss)

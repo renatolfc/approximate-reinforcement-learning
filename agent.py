@@ -279,7 +279,7 @@ class Agent(object):
 
     def train(self, episodes, max_steps, checkpointfn=None, render=False):
         """Trains the agent.
-        
+
         :param episodes: The number of episodes to use.
         :param max_steps: The maximum number of steps to take within an episode.
         :param checkpointfn: The name of the file where to persist the network.
@@ -343,7 +343,7 @@ class Agent(object):
 
     def evaluate(self, episodes, max_steps, render=False):
         """Evaluates the agent in the environment.
-        
+
         :param episodes: On how many episodes to evaluate the agent.
         :param max_steps: Maximum number of steps within an episode.
         :param render: Whether evaluation should be rendered.

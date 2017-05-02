@@ -53,10 +53,15 @@ class FullyConnectedQNetwork(object):
     "A fully connected Q-learning approximation neural network."
     def __init__(self, learning_rate, observation_size, action_size,
                  hidden_size, n_layers, name='FullyConnectedQNetwork',
-                 clip_delta=False):
+                 clip_delta=True, reset_weights_every=10):
 
+        self.copies = []
         self.layers = []
+        self.iteration = 0
         tf.reset_default_graph()
+        self.update_parameters = []
+        self.prediction_parameters = []
+        self.reset_weights_every = reset_weights_every
 
         with tf.variable_scope(name):
             # Inputs coming from the environment. In principle, we could
@@ -77,31 +82,32 @@ class FullyConnectedQNetwork(object):
             self.q_targets_ = tf.placeholder(tf.float32, [None], name='target')
 
             # Build each hidden layer
-            prev = self.inputs_
+            prev = (self.inputs_, self.inputs_)
             for _ in range(n_layers):
                 prev = self._build_layer(prev, hidden_size)
 
-            # Linear output layer
-            self.output = tf.contrib.layers.fully_connected(prev, action_size,
-                                                            activation_fn=None)
+            self.output_train, self.output_predict = self._build_layer(
+                prev,
+                action_size,
+                activation=None
+            )
+
             # Train with loss (targetQ - Q)^2 {{{
             self.q = tf.reduce_sum(
                 # This multiplication allows us to select which output
                 # corresponds to which action. Other values are useless.
                 tf.multiply(
-                    self.output,
+                    self.output_train,
                     tf.one_hot(self.actions_, action_size)
                 ),
-            axis=1)
-
+                axis=1
+            )
 
             delta = self.q - self.q_targets_
             if clip_delta:
-                delta = tf.clip_by_value(
-                    delta,
-                    -1.0,
-                    +1.0
-                )
+                delta = tf.where(tf.abs(delta) < 1.0,
+                                 0.5 * tf.square(delta),
+                                 tf.abs(delta) - 0.5)
 
             # The loss function
             self.loss = tf.reduce_mean(
@@ -109,16 +115,48 @@ class FullyConnectedQNetwork(object):
             )
             # }}}
 
-            self.opt = tf.train.AdamOptimizer(learning_rate).minimize(self.loss)
+            self.opt = tf.train.RMSPropOptimizer(learning_rate).minimize(self.loss)
 
     def _build_layer(self, previous, size, activation=tf.nn.relu):
-        layer = tf.contrib.layers.fully_connected(
-            previous,
-            size,
-            activation_fn=activation
+
+        # It doesn't matter which element we pick, since both have the same
+        # shape
+        shape = previous[-1].get_shape().as_list()
+        previous_prediction, previous_train = previous
+
+        # prediction parameters {{{
+        wp = tf.Variable(tf.truncated_normal((shape[-1], size)))
+        bp = tf.Variable(tf.zeros(size))
+        self.prediction_parameters.append(wp)
+        self.prediction_parameters.append(bp)
+        # }}}
+
+        # training parameters {{{
+        wt = tf.Variable(tf.truncated_normal((shape[-1], size)))
+        bt = tf.Variable(tf.zeros(size))
+        self.update_parameters.append(wt)
+        self.update_parameters.append(bt)
+        # }}}
+
+        # Copy training parameters to prediction network {{{
+        self.copies.append(
+            wt.assign(wp)
         )
-        self.layers.append(layer)
-        return layer
+
+        self.copies.append(
+            bt.assign(bp)
+        )
+        # }}}
+
+        pred_layer = tf.add(tf.matmul(previous_prediction, wp), bp)
+        train_layer = tf.add(tf.matmul(previous_train, wt), bt)
+
+        if activation:
+            pred_layer = activation(pred_layer)
+            train_layer = activation(train_layer)
+
+        self.layers.append((train_layer, pred_layer))
+        return (train_layer, pred_layer)
 
     def fit(self, session, observations, actions, rewards, next_observations,
             gamma):
@@ -138,11 +176,17 @@ class FullyConnectedQNetwork(object):
 
         :return: the gradient descent loss
         """
+        if (self.iteration % self.reset_weights_every) == 0:
+            # Copy weights from trainer to predictor
+            session.run(self.copies)
+
+        self.iteration += 1
+
         # These are the Q targets computed with the current weights in the
         # neural network function approximator. In other words, this gives
         # \hat{Q}(s, a) for all actions available at state s
         q_targets = session.run(
-            self.output,
+            self.output_predict,
             feed_dict={self.inputs_: next_observations}
         )
 
@@ -181,7 +225,7 @@ class FullyConnectedQNetwork(object):
         }
         return np.argmax(
             session.run(
-                self.output,
+                self.output_predict,
                 feed_dict=feed_dict
             )
         )
